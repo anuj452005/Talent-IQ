@@ -4,6 +4,9 @@ import {
   generateInterviewIntro, 
   generateInterviewFeedback 
 } from "../lib/geminiAI.js";
+import { 
+  generateInterviewResponseStream 
+} from "../lib/groqAI.js";
 
 /**
  * POST /api/ai-interview/start
@@ -145,6 +148,99 @@ export async function sendMessage(req, res) {
 }
 
 /**
+ * POST /api/ai-interview/message-stream
+ * Send a message to the AI interviewer and get streaming response (SSE)
+ */
+export async function sendMessageStream(req, res) {
+  try {
+    const { sessionId, message, currentCode } = req.body;
+    const userId = req.user._id;
+
+    if (!sessionId || !message) {
+      return res.status(400).json({ message: "Session ID and message are required" });
+    }
+
+    const session = await Session.findById(sessionId);
+
+    if (!session) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    if (session.host.toString() !== userId.toString()) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (session.sessionType !== "ai") {
+      return res.status(400).json({ message: "This is not an AI session" });
+    }
+
+    if (session.status !== "active") {
+      return res.status(400).json({ message: "Session is not active" });
+    }
+
+    // Add user message to conversation
+    session.aiConversation.push({
+      role: "user",
+      content: message,
+      timestamp: new Date(),
+    });
+
+    if (currentCode) {
+      session.codeSnapshot = currentCode;
+    }
+
+    await session.save();
+
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Generate AI response stream
+    const stream = await generateInterviewResponseStream(
+      session.aiConversation.map(m => ({ role: m.role, content: m.content })),
+      currentCode || "",
+      {
+        title: session.problem,
+        difficulty: session.difficulty,
+        description: session.problem,
+      },
+      message
+    );
+
+    let fullAiResponse = "";
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || "";
+      if (content) {
+        fullAiResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    // Add AI response to conversation in DB after stream ends
+    session.aiConversation.push({
+      role: "ai",
+      content: fullAiResponse,
+      timestamp: new Date(),
+    });
+
+    await session.save();
+
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch (error) {
+    console.log("Error in sendMessageStream controller:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Internal Server Error" });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: "Stream error occurred" })}\n\n`);
+      res.end();
+    }
+  }
+}
+
+/**
  * POST /api/ai-interview/end
  * End the AI interview session and get final feedback
  */
@@ -172,14 +268,19 @@ export async function endAISession(req, res) {
     }
 
     // Generate comprehensive feedback
-    const feedbackResult = await generateInterviewFeedback(
-      session.aiConversation.map(m => ({ role: m.role, content: m.content })),
-      finalCode || session.codeSnapshot || "",
-      {
-        title: session.problem,
-        difficulty: session.difficulty,
-      }
-    );
+    let feedbackResult = { success: false };
+    try {
+      feedbackResult = await generateInterviewFeedback(
+        session.aiConversation.map(m => ({ role: m.role, content: m.content })),
+        finalCode || session.codeSnapshot || "",
+        {
+          title: session.problem,
+          difficulty: session.difficulty,
+        }
+      );
+    } catch (error) {
+      console.error("Feedback generation error:", error.message);
+    }
 
     if (feedbackResult.success && feedbackResult.feedback) {
       session.aiFeedback = {
@@ -190,7 +291,18 @@ export async function endAISession(req, res) {
         improvements: feedbackResult.feedback.improvements || [],
         summary: feedbackResult.feedback.summary || "Interview completed.",
       };
-      session.rating = Math.round(feedbackResult.feedback.overallScore / 2); // Convert 10-scale to 5-scale
+      session.rating = Math.round((feedbackResult.feedback.overallScore || 5) / 2); // Convert 10-scale to 5-scale
+    } else {
+      // Fallback feedback if AI fails
+      session.aiFeedback = {
+        overallScore: 5,
+        technicalScore: 5,
+        communicationScore: 5,
+        problemSolvingScore: 5,
+        improvements: ["Keep practicing DSA problems."],
+        summary: "Interview completed. Detailed AI feedback was unavailable at this time.",
+      };
+      session.rating = 3;
     }
 
     // Save final code
@@ -229,6 +341,12 @@ export async function getAISession(req, res) {
 
     if (session.sessionType !== "ai") {
       return res.status(400).json({ message: "This is not an AI session" });
+    }
+
+    // Privacy check: Only the host can view AI session
+    const userId = req.user._id;
+    if (session.host._id.toString() !== userId.toString()) {
+      return res.status(403).json({ message: "Unauthorized access to AI session" });
     }
 
     res.status(200).json({ session });

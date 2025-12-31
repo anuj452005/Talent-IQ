@@ -69,6 +69,11 @@ function AISessionPage() {
     const handleSendMessage = async (message) => {
         if (!session) return;
 
+        if (message === null) {
+            refetch();
+            return;
+        }
+
         await sendMessageMutation.mutateAsync({
             sessionId: session._id,
             message,

@@ -50,8 +50,18 @@ export const sessionApi = {
     const response = await axiosInstance.post("/ai-interview/end", data);
     return response.data;
   },
-  getAISession: async (id) => {
-    const response = await axiosInstance.get(`/ai-interview/${id}`);
-    return response.data;
+  sendAIMessageStream: async (data) => {
+    return await fetch(`${import.meta.env.VITE_API_URL}/ai-interview/message-stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${data.token}`, // Since axios isn't used here, we need the token
+      },
+      body: JSON.stringify({
+        sessionId: data.sessionId,
+        message: data.message,
+        currentCode: data.currentCode,
+      }),
+    });
   },
 };

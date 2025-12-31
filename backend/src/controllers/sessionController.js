@@ -41,9 +41,15 @@ export async function createSession(req, res) {
   }
 }
 
-export async function getActiveSessions(_, res) {
+export async function getActiveSessions(req, res) {
   try {
-    const sessions = await Session.find({ status: "active" })
+    const userId = req.user._id;
+
+    // Only get sessions where user is either host or participant
+    const sessions = await Session.find({ 
+      status: "active",
+      $or: [{ host: userId }, { participant: userId }]
+    })
       .populate("host", "name profileImage email clerkId")
       .populate("participant", "name profileImage email clerkId")
       .sort({ createdAt: -1 })
@@ -84,6 +90,13 @@ export async function getSessionById(req, res) {
       .populate("participant", "name email profileImage clerkId");
 
     if (!session) return res.status(404).json({ message: "Session not found" });
+
+    // Privacy check: Only host or participant can view session details
+    const userId = req.user._id;
+    if (session.host.toString() !== userId.toString() && 
+        (!session.participant || session.participant._id.toString() !== userId.toString())) {
+      return res.status(403).json({ message: "Unauthorized to view this session" });
+    }
 
     res.status(200).json({ session });
   } catch (error) {

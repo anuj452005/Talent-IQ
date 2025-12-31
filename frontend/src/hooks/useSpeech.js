@@ -103,14 +103,13 @@ export function useSpeechToText() {
   };
 }
 
-/**
- * Custom hook for Text-to-Speech using Web Speech API
- */
 export function useTextToSpeech() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [voices, setVoices] = useState([]);
   const utteranceRef = useRef(null);
+  const queueRef = useRef([]);
+  const isProcessingQueueRef = useRef(false);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -118,17 +117,11 @@ export function useTextToSpeech() {
 
       const loadVoices = () => {
         const availableVoices = window.speechSynthesis.getVoices();
-        console.log(`TTS: Loaded ${availableVoices.length} voices`);
         setVoices(availableVoices);
       };
 
-      // Initial load
       loadVoices();
-      
-      // Event listener for when voices change (Chrome requires this)
       window.speechSynthesis.onvoiceschanged = loadVoices;
-    } else {
-      console.warn("TTS: Speech synthesis not supported in this browser");
     }
 
     return () => {
@@ -138,42 +131,32 @@ export function useTextToSpeech() {
     };
   }, []);
 
-  const speak = useCallback((text, options = {}) => {
-    if (!isSupported || !text) {
-        console.warn("TTS: Cannot speak - supported:", isSupported, "text:", !!text);
-        return;
+  const processQueue = useCallback((options = {}) => {
+    if (queueRef.current.length === 0) {
+      isProcessingQueueRef.current = false;
+      setIsSpeaking(false);
+      return;
     }
 
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
+    isProcessingQueueRef.current = true;
+    const text = queueRef.current.shift();
+    
+    if (!text) {
+        processQueue(options);
+        return;
+    }
 
     const utterance = new SpeechSynthesisUtterance(text);
     utteranceRef.current = utterance;
 
     // Smart voice selection
     let chosenVoice = null;
-    
-    // 1. Try to find a high-quality "Google" or "Neural" voice
     const preferredVoices = voices.filter(v => v.lang.startsWith("en") && (v.name.includes("Google") || v.name.includes("Natural") || v.name.includes("Premium")));
-    if (preferredVoices.length > 0) {
-        chosenVoice = preferredVoices[0];
-    } 
-    // 2. Fallback to any English voice
-    else {
-        chosenVoice = voices.find(v => v.lang.startsWith("en"));
-    }
-    
-    // 3. Fallback to default (usually the first one or system default)
-    if (!chosenVoice && voices.length > 0) {
-        chosenVoice = voices[0];
-    }
+    if (preferredVoices.length > 0) chosenVoice = preferredVoices[0];
+    else chosenVoice = voices.find(v => v.lang.startsWith("en"));
+    if (!chosenVoice && voices.length > 0) chosenVoice = voices[0];
 
-    if (chosenVoice) {
-    //   console.log("TTS: Using voice:", chosenVoice.name);
-      utterance.voice = chosenVoice;
-    } else {
-    //   console.log("TTS: Using system default voice");
-    }
+    if (chosenVoice) utterance.voice = chosenVoice;
 
     utterance.rate = options.rate || 1;
     utterance.pitch = options.pitch || 1;
@@ -182,23 +165,37 @@ export function useTextToSpeech() {
     utterance.onstart = () => setIsSpeaking(true);
     
     utterance.onend = () => {
-        setIsSpeaking(false);
+        processQueue(options);
     };
     
     utterance.onerror = (e) => {
         console.error("TTS Error:", e);
-        setIsSpeaking(false);
+        processQueue(options);
     };
 
     try {
         window.speechSynthesis.speak(utterance);
     } catch (err) {
         console.error("TTS: Speak threw error", err);
-        setIsSpeaking(false);
+        processQueue(options);
     }
-  }, [isSupported, voices]);
+  }, [voices]);
+
+  const speak = useCallback((text, options = {}) => {
+    if (!isSupported || !text) return;
+
+    // Add to queue
+    queueRef.current.push(text);
+
+    // If not already processing, start
+    if (!isProcessingQueueRef.current) {
+        processQueue(options);
+    }
+  }, [isSupported, processQueue]);
 
   const stop = useCallback(() => {
+    queueRef.current = [];
+    isProcessingQueueRef.current = false;
     if (typeof window !== "undefined" && window.speechSynthesis) {
         window.speechSynthesis.cancel();
     }

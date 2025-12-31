@@ -1,9 +1,64 @@
 // Groq AI Integration - FREE tier (14,400 requests/day)
 // Using Llama 3 70B model for code review
 
+import Groq from "groq-sdk";
 import { ENV } from "./env.js";
 
+const groq = new Groq({ apiKey: ENV.GROQ_API_KEY });
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * AI Interviewer: Generate streaming response to user's message/code
+ * Behaves like a real DSA interviewer - asks follow-up questions, provides hints
+ */
+export async function generateInterviewResponseStream(conversationHistory, currentCode, problem, userMessage) {
+  const systemPrompt = `You are an experienced and friendly DSA interviewer conducting a technical interview. Your goal is to help the candidate demonstrate their problem-solving skills while making them feel comfortable.
+
+CRITICAL RULES:
+1. ALWAYS respond to what the user says - NEVER say you can't process something
+2. If they greet you (hi, hello, etc), respond warmly and ask if they're ready to start
+3. If they give short answers, ask follow-up questions to understand their thinking
+4. Acknowledge their input before asking the next question
+5. Be conversational and natural - this is a voice/chat interview
+
+INTERVIEW FLOW:
+- Start: Greet warmly, present problem, ask if they have clarifying questions
+- During: Listen to their approach, provide feedback, ask about edge cases/complexity
+- Coding: Observe their code, point out potential issues via questions
+- Cross-question: "What if X?", "How would you optimize?", "What's the time complexity?"
+- Never give direct solutions - guide with hints and questions
+
+PROBLEM:
+Title: ${problem.title}
+Difficulty: ${problem.difficulty}
+Description: ${problem.description}
+
+USER'S CODE:
+\`\`\`
+${currentCode || 'No code written yet'}
+\`\`\`
+
+RESPOND AS THE INTERVIEWER:
+- Be warm and encouraging
+- Acknowledge what they said
+- Ask a follow-up question to keep the interview flowing
+- Keep it conversational (2-3 sentences)
+- Speak naturally like you're on a phone call`;
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...conversationHistory.map(m => ({ role: m.role, content: m.content })),
+    { role: "user", content: userMessage }
+  ];
+
+  return groq.chat.completions.create({
+    messages,
+    model: "llama-3.3-70b-versatile",
+    temperature: 0.5,
+    max_tokens: 1024,
+    stream: true,
+  });
+}
 
 /**
  * Review code using Groq's Llama 3 model

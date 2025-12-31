@@ -12,7 +12,9 @@ import {
     PhoneOffIcon,
     MessageSquareIcon
 } from "lucide-react";
+import { useAuth } from "@clerk/clerk-react";
 import { useSpeechToText, useTextToSpeech } from "../hooks/useSpeech";
+import { sessionApi } from "../api/sessions";
 
 function AIChat({
     conversation = [],
@@ -28,6 +30,10 @@ function AIChat({
     const chatEndRef = useRef(null);
     const lastSpokenIndexRef = useRef(-1);
     const pendingMessageRef = useRef("");
+    const [streamingMessage, setStreamingMessage] = useState("");
+    const [isThinking, setIsThinking] = useState(false);
+
+    const { getToken } = useAuth();
 
 
     // Speech hooks
@@ -53,14 +59,14 @@ function AIChat({
     // DEFINED EARLY to avoid ReferenceError in useEffect
     const handleSendVoiceMessage = useCallback(() => {
         const msg = pendingMessageRef.current.trim();
-        if (msg && !isLoading) {
+        if (msg && !isThinking) {
             stopListening();
-            onSendMessage(msg);
+            handleSubmitStreaming(null, msg);
             pendingMessageRef.current = "";
             setMessage("");
             resetTranscript();
         }
-    }, [isLoading, onSendMessage, resetTranscript, stopListening]);
+    }, [isThinking, resetTranscript, stopListening]);
 
     // Auto-scroll to bottom
     useEffect(() => {
@@ -75,9 +81,9 @@ function AIChat({
         }
     }, [transcript]);
 
-    // Auto-speak AI messages
+    // Auto-speak AI messages (when NOT streaming - e.g. on load or initial greeting)
     useEffect(() => {
-        if (conversation.length > 0 && isVoiceActive) {
+        if (conversation.length > 0 && isVoiceActive && !isThinking) {
             const lastMessage = conversation[conversation.length - 1];
             const lastIndex = conversation.length - 1;
 
@@ -86,14 +92,14 @@ function AIChat({
                 speak(lastMessage.content);
             }
         }
-    }, [conversation, isVoiceActive, speak]);
+    }, [conversation, isVoiceActive, speak, isThinking]);
 
     // When AI finishes speaking, auto-start listening
     useEffect(() => {
-        if (isVoiceActive && !isSpeaking && !isListening && !isLoading && !disabled) {
+        if (isVoiceActive && !isThinking && !isSpeaking && !isListening && !disabled) {
             // Small delay before starting to listen
             const timer = setTimeout(() => {
-                if (isVoiceActive && !isSpeaking && !isListening && !isLoading) {
+                if (isVoiceActive && !isThinking && !isSpeaking && !isListening) {
                     resetTranscript();
                     setMessage("");
                     startListening();
@@ -101,7 +107,7 @@ function AIChat({
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [isSpeaking, isVoiceActive, isListening, isLoading, disabled, resetTranscript, startListening]);
+    }, [isSpeaking, isVoiceActive, isListening, isThinking, disabled, resetTranscript, startListening]);
 
     // Auto-start voice mode when conversation has intro
     useEffect(() => {
@@ -115,20 +121,96 @@ function AIChat({
         }
     }, [autoStartVoiceMode, voiceSupported, conversation, hasSpokenIntro, disabled]);
 
-    // Handle manual send
-    const handleSubmit = (e) => {
+    // Handle Streaming Submission
+    const handleSubmitStreaming = async (e, forcedMsg = null) => {
         e?.preventDefault();
-        const msg = message.trim();
-        if (!msg || isLoading || disabled) return;
+        const msg = forcedMsg || message.trim();
+        if (!msg || isThinking || disabled) return;
 
         if (isListening) stopListening();
         if (isSpeaking) stopSpeaking();
 
+        // Add user message locally immediately
         onSendMessage(msg);
         setMessage("");
         pendingMessageRef.current = "";
         resetTranscript();
+
+        setIsThinking(true);
+        setStreamingMessage("");
+
+        try {
+            const token = await getToken();
+            const sessionId = conversation[0]?.sessionId || window.location.pathname.split("/").pop();
+
+            const response = await sessionApi.sendAIMessageStream({
+                sessionId,
+                message: msg,
+                token
+            });
+
+            if (!response.ok) throw new Error("Stream failed");
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let accumulated = "";
+            let sentenceBuffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split("\n");
+
+                for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                        const dataStr = line.replace("data: ", "").trim();
+                        if (dataStr === "[DONE]") {
+                            // Backend will have saved the full message to DB
+                            // We wait for the parent to refetch or manually update
+                            continue;
+                        }
+
+                        try {
+                            const data = JSON.parse(dataStr);
+                            const content = data.content;
+                            if (content) {
+                                accumulated += content;
+                                setStreamingMessage(prev => prev + content);
+                                sentenceBuffer += content;
+
+                                // Buffer for TTS
+                                if (isVoiceActive && /[.!?]/.test(content)) {
+                                    const sentences = sentenceBuffer.match(/[^.!?]+[.!?]+/g);
+                                    if (sentences) {
+                                        sentences.forEach(s => speak(s.trim()));
+                                        sentenceBuffer = sentenceBuffer.replace(/[^.!?]+[.!?]+/g, "");
+                                    }
+                                }
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+
+            // Speak any remaining buffer
+            if (isVoiceActive && sentenceBuffer.trim()) {
+                speak(sentenceBuffer.trim());
+            }
+
+        } catch (error) {
+            console.error("Streaming error:", error);
+        } finally {
+            setIsThinking(false);
+            setStreamingMessage("");
+            // Trigger refetch in parent
+            setTimeout(() => onSendMessage(null), 500); // Signal completion
+        }
     };
+
+    // Replacement for handleSubmit
+    const handleSubmit = (e) => handleSubmitStreaming(e);
 
     const handleKeyDown = (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -186,7 +268,7 @@ function AIChat({
                     <div className="flex items-center justify-center gap-2 mb-2">
                         <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-red-500 animate-pulse' : isSpeaking ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`} />
                         <span className="font-semibold">
-                            {isListening ? 'Listening...' : isSpeaking ? 'AI Speaking...' : isLoading ? 'Processing...' : 'Your turn to speak'}
+                            {isListening ? 'Listening...' : isSpeaking ? 'AI Speaking...' : isThinking ? 'Processing...' : 'Your turn to speak'}
                         </span>
                     </div>
                 </div>
@@ -210,7 +292,7 @@ function AIChat({
                             ? "Listening to AI response..."
                             : isListening
                                 ? "Speak your answer now..."
-                                : isLoading
+                                : isThinking
                                     ? "Processing your response..."
                                     : "Click the mic or wait for AI"
                         }
@@ -227,7 +309,7 @@ function AIChat({
                     {/* Mic Button */}
                     <button
                         onClick={toggleListening}
-                        disabled={isLoading || disabled}
+                        disabled={isThinking || disabled}
                         className={`btn btn-circle btn-lg w-20 h-20 transition-all duration-300 ${isListening
                             ? 'btn-error animate-pulse scale-110'
                             : isSpeaking
@@ -288,7 +370,7 @@ function AIChat({
                         <div>
                             <h3 className="font-semibold text-base-content">AI Interviewer</h3>
                             <p className="text-xs text-base-content/60">
-                                {isLoading ? "Thinking..." : "Text Mode"}
+                                {isThinking ? "Thinking..." : "Text Mode"}
                             </p>
                         </div>
                     </div>
@@ -345,7 +427,20 @@ function AIChat({
                     ))
                 )}
 
-                {isLoading && (
+                {/* Streaming Message */}
+                {streamingMessage && (
+                    <div className="flex gap-3">
+                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                            <BotIcon className="w-4 h-4 text-primary" />
+                        </div>
+                        <div className="max-w-[80%] rounded-2xl px-4 py-2.5 bg-base-200 text-base-content rounded-tl-sm shadow-sm ring-1 ring-primary/5">
+                            <p className="text-sm whitespace-pre-wrap">{streamingMessage}</p>
+                            <span className="inline-block w-1.5 h-4 bg-primary/40 animate-pulse ml-1 align-middle" />
+                        </div>
+                    </div>
+                )}
+
+                {isThinking && !streamingMessage && (
                     <div className="flex gap-3">
                         <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
                             <BotIcon className="w-4 h-4 text-primary" />
@@ -371,16 +466,16 @@ function AIChat({
                         onChange={(e) => setMessage(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder={disabled ? "Interview ended" : "Type your message..."}
-                        disabled={isLoading || disabled}
+                        disabled={isThinking || disabled}
                         rows={2}
                         className="textarea textarea-bordered flex-1 resize-none text-sm"
                     />
                     <button
                         type="submit"
-                        disabled={!message.trim() || isLoading || disabled}
+                        disabled={!message.trim() || isThinking || disabled}
                         className="btn btn-primary btn-square self-end"
                     >
-                        {isLoading ? (
+                        {isThinking ? (
                             <Loader2Icon className="w-5 h-5 animate-spin" />
                         ) : (
                             <SendIcon className="w-5 h-5" />

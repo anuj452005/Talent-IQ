@@ -3,6 +3,7 @@ import { protectRoute } from "../middleware/protectRoute.js";
 import { 
   startAISession, 
   sendMessage, 
+  sendMessageStream,
   endAISession, 
   getAISession 
 } from "../controllers/aiInterviewController.js";
@@ -17,6 +18,7 @@ router.post("/start", startAISession);
 
 // Send message to AI interviewer
 router.post("/message", sendMessage);
+router.post("/message-stream", sendMessageStream);
 
 // End AI session and get feedback
 router.post("/end", endAISession);
