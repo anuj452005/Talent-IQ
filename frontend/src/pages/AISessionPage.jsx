@@ -32,7 +32,7 @@ function AISessionPage() {
     const [isRunning, setIsRunning] = useState(false);
     const [showFeedback, setShowFeedback] = useState(false);
 
-    const { data: sessionData, isLoading: loadingSession, refetch } = useAISessionById(id);
+    const { data: sessionData, isLoading: loadingSession, refetch, error } = useAISessionById(id);
     const sendMessageMutation = useSendAIMessage();
     const endSessionMutation = useEndAISession();
 
@@ -118,15 +118,27 @@ function AISessionPage() {
         );
     }
 
-    if (!session) {
+    if (error || !session) {
+        const isUnauthorized = error?.response?.status === 403;
+
         return (
             <div className="h-screen bg-base-100 flex flex-col">
                 <Navbar />
                 <div className="flex-1 flex items-center justify-center">
                     <div className="text-center">
-                        <BotIcon className="w-16 h-16 mx-auto mb-4 text-error opacity-50" />
-                        <h2 className="text-2xl font-bold mb-2">Session Not Found</h2>
-                        <p className="text-base-content/60 mb-4">This AI interview session doesn't exist.</p>
+                        {isUnauthorized ? (
+                            <LogOutIcon className="w-16 h-16 mx-auto mb-4 text-warning opacity-50" />
+                        ) : (
+                            <BotIcon className="w-16 h-16 mx-auto mb-4 text-error opacity-50" />
+                        )}
+                        <h2 className="text-2xl font-bold mb-2">
+                            {isUnauthorized ? "Access Denied" : "Session Not Found"}
+                        </h2>
+                        <p className="text-base-content/60 mb-4">
+                            {isUnauthorized
+                                ? "You are not authorized to view this interview session."
+                                : "This AI interview session doesn't exist or has been deleted."}
+                        </p>
                         <button onClick={() => navigate("/dashboard")} className="btn btn-primary">
                             Back to Dashboard
                         </button>

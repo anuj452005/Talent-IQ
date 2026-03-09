@@ -53,7 +53,26 @@ function AIChat({
         stop: stopSpeaking
     } = useTextToSpeech();
 
+    // Tasks related to voice features:
+    // [x] Phase 1: UI & Visualization
+    // [x] Implement Visual Audio Pulse (Speaking Indicator)
+    // [x] Create Device Selection Modal (Mic/Speaker/Camera)
+    // [x] Phase 2: Logic & Quality
+    // [x] Implement "You are Muted" smart notification
+    // [x] Apply high-fidelity audio constraints (Noise/Echo suppression)
+    // [x] Phase 3: AI Interview Integration
+    // [x] Sync visual indicators with AI Speaking state
+
     const voiceSupported = sttSupported && ttsSupported;
+
+    useEffect(() => {
+        console.log("AIChat: Voice Support Status", {
+            sttSupported,
+            ttsSupported,
+            voiceSupported,
+            autoStartVoiceMode
+        });
+    }, [sttSupported, ttsSupported, voiceSupported, autoStartVoiceMode]);
 
     // Send message after silence detection (when lisening stops)
     // DEFINED EARLY to avoid ReferenceError in useEffect
@@ -273,16 +292,24 @@ function AIChat({
                     </div>
                 </div>
 
-                {/* Avatar and Status */}
                 <div className="flex-1 flex flex-col items-center justify-center p-8">
-                    <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-all duration-500 ${isSpeaking ? 'bg-green-500/20 scale-110 animate-pulse' :
-                        isListening ? 'bg-red-500/20 scale-105' :
-                            'bg-primary/20'
-                        }`}>
-                        <BotIcon className={`w-16 h-16 ${isSpeaking ? 'text-green-500' :
-                            isListening ? 'text-red-500' :
-                                'text-primary'
-                            }`} />
+                    <div className="relative">
+                        {/* Multiple pulse rings for high-end look */}
+                        {(isSpeaking || isListening) && (
+                            <>
+                                <div className={`absolute inset-0 rounded-full animate-ping opacity-20 ${isSpeaking ? 'bg-green-500' : 'bg-red-500'}`} style={{ animationDuration: '3s' }} />
+                                <div className={`absolute inset-0 rounded-full animate-ping opacity-10 ${isSpeaking ? 'bg-green-500' : 'bg-red-500'}`} style={{ animationDuration: '2s', animationDelay: '0.5s' }} />
+                            </>
+                        )}
+                        <div className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 relative z-10 transition-all duration-500 ${isSpeaking ? 'bg-green-500/20 scale-110' :
+                            isListening ? 'bg-red-500/20 scale-105' :
+                                'bg-primary/20'
+                            }`}>
+                            <BotIcon className={`w-16 h-16 ${isSpeaking ? 'text-green-500' :
+                                isListening ? 'text-red-500' :
+                                    'text-primary'
+                                }`} />
+                        </div>
                     </div>
 
                     <h2 className="text-2xl font-bold mb-2">AI Interviewer</h2>
@@ -371,9 +398,18 @@ function AIChat({
                             <h3 className="font-semibold text-base-content">AI Interviewer</h3>
                             <p className="text-xs text-base-content/60">
                                 {isThinking ? "Thinking..." : "Text Mode"}
+                                {!voiceSupported && !disabled && (
+                                    <span className="text-error ml-2">(Voice Not Supported)</span>
+                                )}
                             </p>
                         </div>
                     </div>
+
+                    {!voiceSupported && !disabled && (
+                        <div className="tooltip tooltip-left" data-tip="Enable permissions or use a modern browser like Chrome/Edge">
+                            <BotIcon className="w-4 h-4 text-error opacity-50 cursor-help" />
+                        </div>
+                    )}
 
                     {voiceSupported && !disabled && (
                         <button

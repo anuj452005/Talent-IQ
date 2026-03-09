@@ -64,4 +64,8 @@ export const sessionApi = {
       }),
     });
   },
+  getAISession: async (id) => {
+    const response = await axiosInstance.get(`/ai-interview/${id}`);
+    return response.data;
+  },
 };

@@ -91,10 +91,17 @@ export async function getSessionById(req, res) {
 
     if (!session) return res.status(404).json({ message: "Session not found" });
 
-    // Privacy check: Only host or participant can view session details
+    // Privacy check:
     const userId = req.user._id;
-    if (session.host.toString() !== userId.toString() && 
-        (!session.participant || session.participant._id.toString() !== userId.toString())) {
+    const hostId = session.host._id || session.host;
+    const participantId = session.participant?._id || session.participant;
+
+    const isHost = hostId.toString() === userId.toString();
+    const isParticipant = participantId?.toString() === userId.toString();
+    const isOpenSession = session.status === "active" && !session.participant;
+
+    // Allow access if user is host, participant, or if it's an open active session (for joining)
+    if (!isHost && !isParticipant && !isOpenSession) {
       return res.status(403).json({ message: "Unauthorized to view this session" });
     }
 

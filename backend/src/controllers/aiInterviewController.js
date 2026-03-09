@@ -345,7 +345,8 @@ export async function getAISession(req, res) {
 
     // Privacy check: Only the host can view AI session
     const userId = req.user._id;
-    if (session.host._id.toString() !== userId.toString()) {
+    const hostId = session.host._id || session.host;
+    if (hostId.toString() !== userId.toString()) {
       return res.status(403).json({ message: "Unauthorized access to AI session" });
     }
 

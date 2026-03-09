@@ -6,19 +6,23 @@ import { useState, useEffect, useCallback, useRef } from "react";
 export function useSpeechToText() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  });
   const recognitionRef = useRef(null);
 
   useEffect(() => {
-    // Check if browser supports speech recognition
+    if (!isSupported) {
+        console.warn("STT: Browser does not support SpeechRecognition or webkitSpeechRecognition");
+        return;
+    }
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (SpeechRecognition) {
-      setIsSupported(true);
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = "en-US";
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = "en-US";
 
       recognitionRef.current.onstart = () => {
         console.log("STT: Speech recognition started");
@@ -54,9 +58,6 @@ export function useSpeechToText() {
         // Only restart if we think we should still be listening (and it wasn't a deliberate stop)
         // Note: Logic inside onend needs to be careful about infinite loops if errors persist
       };
-    } else {
-        console.warn("STT: Browser does not support SpeechRecognition");
-    }
 
     return () => {
       if (recognitionRef.current) {
@@ -105,19 +106,20 @@ export function useSpeechToText() {
 
 export function useTextToSpeech() {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported] = useState(() => {
+    return typeof window !== "undefined" && "speechSynthesis" in window;
+  });
   const [voices, setVoices] = useState([]);
   const utteranceRef = useRef(null);
   const queueRef = useRef([]);
   const isProcessingQueueRef = useRef(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      setIsSupported(true);
-
+    if (isSupported && typeof window !== "undefined" && window.speechSynthesis) {
       const loadVoices = () => {
         const availableVoices = window.speechSynthesis.getVoices();
         setVoices(availableVoices);
+        console.log("TTS: Voices loaded", availableVoices.length);
       };
 
       loadVoices();

@@ -76,6 +76,16 @@ function useStreamClient(session, loadingSession, isHost, isParticipant) {
         // Join video call
         const videoCall = client.call("default", session.callId);
         await videoCall.join({ create: true });
+        
+        // Apply professional audio constraints for better quality
+        if (videoCall.microphone) {
+          await videoCall.microphone.enable({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          });
+        }
+        
         videoCallRef.current = videoCall;
         setCall(videoCall);
 
